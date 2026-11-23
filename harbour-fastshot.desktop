@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=FastShot
+Comment=Fast camera with optional automatic photo enhancement
+Icon=harbour-fastshot
+Exec=sailfish-qml harbour-fastshot
+X-Nemo-Application-Type=silica-qt5
+
+[X-Sailjail]
+OrganizationName=harbour
+ApplicationName=fastshot
+# Camera: the viewfinder and taking photos.
+# Pictures: save to Pictures/Camera and write the enhanced copies.
+Permissions=Camera;Pictures
