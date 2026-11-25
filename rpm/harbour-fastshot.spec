@@ -1,7 +1,7 @@
 Name:       harbour-fastshot
 Summary:    Fast camera with optional automatic photo enhancement
 Version:    0.4.0
-Release:    34
+Release:    35
 License:    GPLv3+
 BuildArch:  noarch
 Source0:    %{name}-%{version}.tar.bz2
@@ -49,6 +49,9 @@ done
 %{_datadir}/icons/hicolor/*/apps/%{name}.png
 
 %changelog
+* Thu Nov 26 2026 FastShot contributors - 0.4.0-35
+- Camera screen: no 4:3/16:9 chip (still in Settings); the enhance chip shows only the mode.
+
 * Wed Nov 25 2026 FastShot contributors - 0.4.0-34
 - Video mode is back: Photo/Video chip at the top, red record button, blinking time while recording,
   720p / 1080p / 4K in the settings, tap the corner to play the last video. On the Xperia 10 III

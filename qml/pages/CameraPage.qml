@@ -2137,10 +2137,9 @@ Page {
         Repeater {
             model: [
                 { text: page.videoMode ? qsTr("● Video") : qsTr("Photo"), action: "mode", show: !page.recording },
-                { text: cfg.aspect, action: "aspect", show: !page.videoMode },
                 { text: qsTr("Flash: %1").arg(page.flashNames[cfg.flash] || ""), action: "flash",
                   show: !page.front && !page.videoMode },
-                { text: qsTr("Enhance: %1").arg(page.modeNames[cfg.enhanceMode] || cfg.enhanceMode), action: "settings",
+                { text: page.modeNames[cfg.enhanceMode] || cfg.enhanceMode, action: "settings",
                   show: !page.recording },
                 { text: qsTr("QR"), action: "qr", show: !page.videoMode }
             ]
@@ -2167,7 +2166,6 @@ Page {
                     onClicked: {
                         if (modelData.action === "mode") page.switchMode()
                         else if (modelData.action === "flash") cfg.flash = (cfg.flash + 1) % 3
-                        else if (modelData.action === "aspect") cfg.aspect = cfg.aspect === "16:9" ? "4:3" : "16:9"
                         else if (modelData.action === "qr") page.qrMode = !page.qrMode
                         else pageStack.push(Qt.resolvedUrl("SettingsPage.qml"),
                                             { cfg: cfg, keysStatus: page.keysStatus, gpuStatus: page.gpuStatus,
