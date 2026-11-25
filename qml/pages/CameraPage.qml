@@ -2139,7 +2139,7 @@ Page {
                 { text: page.videoMode ? qsTr("● Video") : qsTr("Photo"), action: "mode", show: !page.recording },
                 { text: qsTr("Flash: %1").arg(page.flashNames[cfg.flash] || ""), action: "flash",
                   show: !page.front && !page.videoMode },
-                { text: page.modeNames[cfg.enhanceMode] || cfg.enhanceMode, action: "settings",
+                { text: (page.modeNames[cfg.enhanceMode] || cfg.enhanceMode) + " ▾", action: "enhance",
                   show: !page.recording },
                 { text: qsTr("QR"), action: "qr", show: !page.videoMode }
             ]
@@ -2164,12 +2164,72 @@ Page {
                 MouseArea {
                     anchors.fill: parent
                     onClicked: {
-                        if (modelData.action === "mode") page.switchMode()
+                        if (modelData.action !== "enhance") page.enhancePicker = false
+                        if (modelData.action === "enhance") page.enhancePicker = !page.enhancePicker
+                        else if (modelData.action === "mode") page.switchMode()
                         else if (modelData.action === "flash") cfg.flash = (cfg.flash + 1) % 3
                         else if (modelData.action === "qr") page.qrMode = !page.qrMode
-                        else pageStack.push(Qt.resolvedUrl("SettingsPage.qml"),
-                                            { cfg: cfg, keysStatus: page.keysStatus, gpuStatus: page.gpuStatus,
-                                              cameraInfo: page.cameraInfo() })   // while the camera still runs
+                    }
+                }
+            }
+        }
+
+        // Settings: a gear symbol
+        Rectangle {
+            visible: !page.recording
+            width: Theme.itemSizeSmall
+            height: width
+            radius: width / 2
+            color: Qt.rgba(0, 0, 0, 0.5)
+            border { width: 1; color: Qt.rgba(1, 1, 1, 0.6) }
+            Image {
+                anchors.centerIn: parent
+                source: "image://theme/icon-m-setting?white"
+                rotation: -page.deviceRotation
+                Behavior on rotation { RotationAnimation { duration: 200; direction: RotationAnimation.Shortest } }
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    page.enhancePicker = false
+                    pageStack.push(Qt.resolvedUrl("SettingsPage.qml"),
+                                   { cfg: cfg, keysStatus: page.keysStatus, gpuStatus: page.gpuStatus,
+                                     cameraInfo: page.cameraInfo() })   // while the camera still runs
+                }
+            }
+        }
+    }
+
+    // Enhancement picker: opens from the enhance chip, one tap picks a mode
+    property bool enhancePicker: false
+
+    Column {
+        anchors { top: topBar.bottom; topMargin: Theme.paddingMedium; horizontalCenter: parent.horizontalCenter }
+        visible: page.enhancePicker && !page.recording
+        spacing: Theme.paddingSmall
+        z: 10
+
+        Repeater {
+            model: ["off", "auto", "lowlight", "vivid", "subtle"]
+            delegate: Rectangle {
+                readonly property bool current: cfg.enhanceMode === modelData
+                width: Theme.itemSizeHuge * 2
+                height: Theme.itemSizeSmall
+                radius: height / 2
+                color: current ? Theme.highlightBackgroundColor : Qt.rgba(0, 0, 0, 0.7)
+                border { width: 1; color: Qt.rgba(1, 1, 1, 0.6) }
+                Label {
+                    anchors.centerIn: parent
+                    text: page.modeNames[modelData]
+                    color: "white"
+                    font.pixelSize: Theme.fontSizeMedium
+                    font.bold: parent.current
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: {
+                        cfg.enhanceMode = modelData
+                        page.enhancePicker = false
                     }
                 }
             }

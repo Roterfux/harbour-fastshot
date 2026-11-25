@@ -1,7 +1,7 @@
 Name:       harbour-fastshot
 Summary:    Fast camera with optional automatic photo enhancement
 Version:    0.4.0
-Release:    35
+Release:    36
 License:    GPLv3+
 BuildArch:  noarch
 Source0:    %{name}-%{version}.tar.bz2
@@ -49,6 +49,10 @@ done
 %{_datadir}/icons/hicolor/*/apps/%{name}.png
 
 %changelog
+* Thu Nov 26 2026 FastShot contributors - 0.4.0-36
+- Camera screen: settings open from a gear button; the enhance chip opens a list to pick the
+  mode (Off, Smart auto, Low light, Vivid, Subtle) right there.
+
 * Thu Nov 26 2026 FastShot contributors - 0.4.0-35
 - Camera screen: no 4:3/16:9 chip (still in Settings); the enhance chip shows only the mode.
 
