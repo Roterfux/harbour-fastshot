@@ -1922,6 +1922,80 @@ Page {
         }
     }
 
+    // ------------------------------------------------------------------ panorama guide
+    // While a panorama is shot: a level line to follow and how fast the phone turns.
+    // shortcut: 40 deg/s limit is a guess for this phone's burst rate; tune after real panoramas
+    readonly property bool panoGuide: holding && cfg.burstMode === "panorama"
+    readonly property real panoSpeedLimit: 40
+    property real panoSpeed: 0            // smoothed turn rate, degrees per second
+    readonly property bool panoTooFast: panoSpeed > panoSpeedLimit
+
+    onPanoGuideChanged: {
+        if (panoGuide) {
+            createGyro()
+            panoSpeed = 0
+        } else if (gyro && !steadying) {
+            gyro.active = false
+        }
+    }
+
+    Timer {
+        interval: 50
+        repeat: true
+        running: page.panoGuide && page.gyro !== null
+        onTriggered: {
+            page.gyro.active = true          // steady shot may have switched it off
+            var r = page.gyro.reading
+            if (!r) return
+            var turn = Math.abs(r.x) + Math.abs(r.y) + Math.abs(r.z)
+            page.panoSpeed = page.panoSpeed * 0.7 + turn * 0.3
+        }
+    }
+
+    Item {
+        anchors.centerIn: parent
+        width: page.deviceRotation % 180 ? parent.height : parent.width
+        height: page.deviceRotation % 180 ? parent.width : parent.height
+        rotation: -page.deviceRotation
+        visible: page.panoGuide
+
+        Rectangle {                          // keep the horizon on this line while turning
+            anchors.verticalCenter: parent.verticalCenter
+            width: parent.width
+            height: 3
+            color: page.panoTooFast ? "#ff5050" : "white"
+            opacity: 0.8
+        }
+        Column {
+            anchors { horizontalCenter: parent.horizontalCenter; verticalCenter: parent.verticalCenter
+                      verticalCenterOffset: -Theme.itemSizeLarge }
+            spacing: Theme.paddingMedium
+            Label {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: page.panoTooFast ? qsTr("Slower") : qsTr("Turn slowly, keep the line level")
+                color: page.panoTooFast ? "#ff5050" : "white"
+                font.pixelSize: Theme.fontSizeMedium
+                font.bold: true
+                style: Text.Outline
+                styleColor: Qt.rgba(0, 0, 0, 0.6)
+            }
+            Rectangle {                      // turn speed: a full bar is too fast
+                anchors.horizontalCenter: parent.horizontalCenter
+                visible: page.gyro !== null
+                width: Theme.itemSizeHuge * 2
+                height: Theme.paddingMedium
+                radius: height / 2
+                color: Qt.rgba(0, 0, 0, 0.4)
+                Rectangle {
+                    height: parent.height
+                    radius: parent.radius
+                    width: parent.width * Math.min(1, page.panoSpeed / page.panoSpeedLimit)
+                    color: page.panoTooFast ? "#ff5050" : "#50e070"
+                }
+            }
+        }
+    }
+
     // White blink when a photo is taken
     Rectangle {
         id: blink
