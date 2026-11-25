@@ -10,9 +10,9 @@ Page {
     property string cameraInfo: ""
     property string gpuStatus: ""
     readonly property var modes: ["off", "auto", "lowlight", "vivid", "subtle"]
-    readonly property var burstModes: ["single", "best", "stack", "superres", "hdr"]
+    readonly property var burstModes: ["single", "best", "stack", "superres", "hdr", "panorama"]
     readonly property var burstLabels: [qsTr("Single"), qsTr("Best of"), qsTr("Stack"),
-                                        qsTr("Super-res"), qsTr("HDR")]
+                                        qsTr("Super-res"), qsTr("HDR"), qsTr("Panorama")]
 
     allowedOrientations: Orientation.Portrait
 
@@ -197,7 +197,8 @@ Page {
                     : currentIndex === 1 ? qsTr("Takes %1 photos per press and keeps the sharpest.").arg(page.cfg.burstN)
                     : currentIndex === 2 ? qsTr("Takes %1 photos and averages them for less noise.").arg(page.cfg.burstN)
                     : currentIndex === 3 ? qsTr("Takes %1 photos, upscales to 2x and averages for more detail.").arg(page.cfg.burstN)
-                    : qsTr("Takes %1 photos and merges them with tone mapping for high dynamic range.").arg(page.cfg.burstN)
+                    : currentIndex === 4 ? qsTr("Takes %1 photos and merges them with tone mapping for high dynamic range.").arg(page.cfg.burstN)
+                    : qsTr("Hold the shutter and turn slowly to the left or right. The photos are joined when you let go.")
                 menu: ContextMenu {
                     Repeater {
                         model: burstLabels
@@ -207,7 +208,7 @@ Page {
                 onCurrentIndexChanged: page.cfg.burstMode = burstModes[currentIndex]
             }
             Slider {
-                visible: burstModeBox.currentIndex > 0
+                visible: burstModeBox.currentIndex > 0 && burstModeBox.currentIndex < 5
                 width: parent.width
                 minimumValue: 2
                 maximumValue: 5

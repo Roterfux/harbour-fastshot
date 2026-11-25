@@ -173,9 +173,10 @@ Page {
         inFlight += 1
         // Burst and best-of-3 photos go to a hidden folder first, so the media indexer does not
         // read every photo while the camera is still shooting; they are moved afterwards.
-        var group = groupSlots > 0 ? currentGroup : -1
+        // group -2: a panorama frame, joined with the others once the shutter is let go
+        var group = groupSlots > 0 ? currentGroup : cfg.burstMode === "panorama" ? -2 : -1
         if (group >= 0) groupSlots -= 1
-        var dir = ((fast || group >= 0) && cfg.burstHidden && cfg.burstDir !== "") ? cfg.burstDir : cfg.saveDir
+        var dir = ((fast || group !== -1) && cfg.burstHidden && cfg.burstDir !== "") ? cfg.burstDir : cfg.saveDir
         var id = camera.imageCapture.captureToLocation(dir !== "" ? dir + "/" + name : "")
         shots[id] = { press: press, captured: 0, group: group }
         if (lockedForShot) shotLockTimer.restart()
@@ -293,7 +294,8 @@ Page {
         if (presses.length > maxPending) presses.shift()
         holdEnhancing(5)
         // Best-of / stack: one press takes several photos (single shots only, not during a hold-burst)
-        if (cfg.burstMode !== "single" && !holding && groupSlots === 0) startGroup()
+        if (cfg.burstMode !== "single" && cfg.burstMode !== "panorama" && !holding && groupSlots === 0)
+            startGroup()
         steadySkipFocus = !!skipFocus
         // Steady shot: wait (at most 0.7 s) until the phone stops shaking, then go on
         if (cfg.steadyShot && !holding && !steadying && gyro) {
@@ -352,6 +354,7 @@ Page {
 
     function shutterUp() {
         holding = false
+        if (inFlight === 0) flushPanorama()   // the last frame was already saved
         if (!prefocusing) return
         prefocusing = false
         if (focusing) {                    // not sharp yet: shoot as soon as it is (or the wait ends)
@@ -470,6 +473,28 @@ Page {
         return true
     }
 
+    // ------------------------------------------------------------------ panorama
+    property var panoFiles: []
+
+    // Once the shutter is let go and every frame is saved: join them
+    function flushPanorama() {
+        if (panoFiles.length === 0 || shootingFast()) return false
+        var files = panoFiles
+        panoFiles = []
+        openGroups += 1
+        callPython("camworker.panorama", [files, cfg.saveDir], function (result) {
+            page.openGroups = Math.max(0, page.openGroups - 1)
+            if (result && result[0]) {
+                page.lastShot = result[0]
+                page.queueEnhance(result[0])
+            } else {
+                page.message = qsTr("Panorama: %1").arg(result ? result[1] : "?")
+            }
+            if (!page.shootingFast()) page.showLastPhoto()
+        })
+        return true
+    }
+
     // Call Python now, or as soon as it has started
     function callPython(fn, args, callback) {
         if (pyReady) {
@@ -506,7 +531,7 @@ Page {
     function photoDone() {
         inFlight = Math.max(0, inFlight - 1)
         captureWatchdog.restart()      // the camera must be ready again soon
-        if (!shootingFast() && !flushBurst() && openGroups === 0) showLastPhoto()
+        if (!shootingFast() && !flushPanorama() && !flushBurst() && openGroups === 0) showLastPhoto()
     }
 
     function showLastPhoto() {
@@ -1202,6 +1227,7 @@ Page {
         keyHeld = false
         keyHoldTimer.stop()
         holding = false
+        if (inFlight === 0) flushPanorama()
     }
 
     Timer {
@@ -1618,6 +1644,8 @@ Page {
                 var hidden = cfg.burstDir !== "" && String(path).indexOf(cfg.burstDir + "/") === 0
                 if (group >= 0) {
                     page.groupPhoto(group, path)             // best of 3 decides, then enhances
+                } else if (group === -2) {
+                    page.panoFiles.push(path)
                 } else if (hidden) {
                     page.burstFiles.push(path)               // moved and enhanced after the burst
                 } else {
@@ -2085,8 +2113,9 @@ Page {
             Label {
                 anchors { bottom: parent.bottom; bottomMargin: 2; horizontalCenter: parent.horizontalCenter }
                 visible: cfg.burstMode !== "single" && !page.holding && page.groupSlots === 0
-                text: (cfg.burstMode === "best" ? "B" : cfg.burstMode === "superres" ? "SR"
-                       : cfg.burstMode === "hdr" ? "HD" : "S") + cfg.burstN
+                text: cfg.burstMode === "panorama" ? "PANO"
+                      : (cfg.burstMode === "best" ? "B" : cfg.burstMode === "superres" ? "SR"
+                         : cfg.burstMode === "hdr" ? "HD" : "S") + cfg.burstN
                 color: Qt.rgba(0, 0, 0, 0.6)
                 font.pixelSize: Theme.fontSizeExtraSmall
                 font.bold: true

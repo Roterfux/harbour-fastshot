@@ -692,6 +692,134 @@ def superres_photos(paths, dest_dir=None):
     return [out_path, len(existing)]
 
 
+PANO_HEIGHT = 2000        # panorama frames are scaled to this height (memory on the phone)
+PANO_SMALL = 200          # width of the copies the frames are matched on
+# shortcut: fixed threshold, 0..255 mean difference; tune if real panoramas drop good frames
+PANO_MAX_DIFF = 22
+
+
+def _pano_small(path, sw=PANO_SMALL, sh=None):
+    """Upright small grayscale copy of a photo (fast JPEG draft decode)."""
+    from PIL import Image, ImageOps
+    with Image.open(path) as im:
+        im.draft("L", (sw * 2, sw * 2))
+        im = ImageOps.exif_transpose(im).convert("L")
+    if sh is None:
+        sh = max(1, round(sw * im.height / im.width))
+    return im.resize((sw, sh), Image.BOX)
+
+
+def _pano_diff(a, b, dx, dy, margin):
+    """Mean difference where b, placed at (dx, dy) relative to a, overlaps a."""
+    from PIL import ImageChops, ImageStat
+    w, h = a.size
+    ov = w - abs(dx)
+    ax, bx = max(dx, 0), max(-dx, 0)
+    pa = a.crop((ax, margin + dy, ax + ov, h - margin + dy))
+    pb = b.crop((bx, margin, bx + ov, h - margin))
+    return ImageStat.Stat(ImageChops.difference(pa, pb)).mean[0]
+
+
+def _pano_shift(a, b):
+    """Where b lies relative to a (small grayscale, same size): (dx, dy, difference).
+    dx > 0: the phone turned right. Overlap of at least 15 % is required."""
+    w, h = a.size
+    margin = h // 10
+    reach = int(w * 0.85)
+    dx = min(range(-reach, reach + 1), key=lambda d: _pano_diff(a, b, d, 0, margin))
+    dy = min(range(-margin, margin + 1), key=lambda d: _pano_diff(a, b, dx, d, margin))
+    near = range(max(-reach, dx - 2), min(reach, dx + 2) + 1)
+    dx = min(near, key=lambda d: _pano_diff(a, b, d, dy, margin))
+    return dx, dy, _pano_diff(a, b, dx, dy, margin)
+
+
+def _pano_layout(smalls):
+    """Pick the frames to join and their positions (small-copy pixels).
+    Returns [(index, x, y)]. A frame is kept once it has moved 40 % of a width past the last kept
+    one; when the next frame no longer matches, the last one that did is kept first."""
+    sw = smalls[0].size[0]
+    kept = [(0, 0, 0)]
+    pending = None
+    for i in range(1, len(smalls)):
+        for attempt in range(2):
+            k, kx, ky = kept[-1]
+            dx, dy, diff = _pano_shift(smalls[k], smalls[i])
+            if diff <= PANO_MAX_DIFF:
+                if abs(dx) >= 0.4 * sw:
+                    kept.append((i, kx + dx, ky + dy))
+                    pending = None
+                else:
+                    pending = (i, kx + dx, ky + dy)
+                break
+            if pending is None or attempt:
+                break                      # no match (blur, someone walked past): skip it
+            kept.append(pending)           # the scene moved on: keep the last match, try again
+            pending = None
+    if pending and abs(pending[1] - kept[-1][1]) >= 0.1 * sw:
+        kept.append(pending)
+    return kept
+
+
+def panorama(paths, dest_dir=None):
+    """Join photos taken while turning the phone (panorama mode: hold the shutter) side by side.
+    Deletes the frames. Returns [path, frames used] or ["", reason]."""
+    from PIL import Image, ImageOps
+    # shortcut: flat joins, no cylindrical warp; straight lines bend past ~120 degrees of turn
+    dest_dir = _plain(dest_dir) if dest_dir else camera_dir()
+    existing = [_plain(p) for p in paths if os.path.exists(_plain(p))]
+    if not existing:
+        return ["", "no photos"]
+    if len(existing) == 1:
+        return [_move(existing[0], dest_dir), 1]
+
+    first = _pano_small(existing[0])
+    smalls = [first] + [_pano_small(p, *first.size) for p in existing[1:]]
+    layout = sorted(_pano_layout(smalls), key=lambda k: k[1])
+    if len(layout) < 2:
+        return ["", "turn the phone further while holding the shutter"]
+
+    frames, exif = [], None
+    for i, _, _ in layout:
+        with Image.open(existing[i]) as im:
+            if exif is None:
+                exif = im.getexif()
+            im = ImageOps.exif_transpose(im).convert("RGB")
+        if im.height > PANO_HEIGHT:
+            im = im.resize((round(im.width * PANO_HEIGHT / im.height), PANO_HEIGHT), Image.LANCZOS)
+        frames.append(im)
+    w, h = frames[0].size
+    scale = w / float(first.size[0])
+    xs = [round(x * scale) for _, x, _ in layout]
+    ys = [round(y * scale) for _, _, y in layout]
+    x0, y0, y1 = xs[0], min(ys), max(ys)
+    canvas = Image.new("RGB", (xs[-1] - x0 + w, h + y1 - y0))
+    canvas.paste(frames[0], (0, ys[0] - y0))
+    for n in range(1, len(frames)):
+        overlap = xs[n - 1] + w - xs[n]
+        seam, band = overlap // 2, max(2, min(overlap // 2, 80))
+        ramp = [0 if x < seam - band // 2 else 255 if x >= seam + band // 2
+                else (x - seam + band // 2) * 255 // band for x in range(w)]
+        mask = Image.new("L", (w, 1))
+        mask.putdata(ramp)
+        canvas.paste(frames[n], (xs[n] - x0, ys[n] - y0), mask.resize((w, h)))
+    result = canvas.crop((0, y1 - y0, canvas.width, h))      # only rows every frame covers
+
+    out_path = _unique(dest_dir, "PANO_" + os.path.basename(existing[0]))
+    save_kw = {"quality": 92}
+    try:
+        exif[0x0112] = 1                   # the pixels are upright now
+        save_kw["exif"] = exif.tobytes()
+    except Exception:
+        pass
+    result.save(out_path, "JPEG", **save_kw)
+    for p in existing:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+    return [out_path, len(layout)]
+
+
 def hdr_merge(paths, dest_dir=None):
     """Stack + enhance with local tone mapping for HDR-like output. Returns [path, count]."""
     from PIL import Image, ImageFilter

@@ -1,7 +1,7 @@
 Name:       harbour-fastshot
 Summary:    Fast camera with optional automatic photo enhancement
 Version:    0.4.0
-Release:    31
+Release:    32
 License:    GPLv3+
 BuildArch:  noarch
 Source0:    %{name}-%{version}.tar.bz2
@@ -49,6 +49,10 @@ done
 %{_datadir}/icons/hicolor/*/apps/%{name}.png
 
 %changelog
+* Wed Nov 25 2026 FastShot contributors - 0.4.0-32
+- Panorama (Settings > Multi-shot): hold the shutter and turn the phone slowly; the photos are
+  joined when you let go. Flat joins, no cylinder warp.
+
 * Fri Nov 20 2026 FastShot contributors - 0.4.0-31
 - Smart auto: no colour correction on mostly black night/dim photos lit by one lamp (blacks
   turned purple).
