@@ -118,6 +118,11 @@ Page {
         property string burstMode: "single"    // "single", "best" or "stack"
         property string captureMode: "photo"   // photo or video (0.4.0-34)
         property string videoRes: "1080"       // 720, 1080 or 2160 (lines)
+        // Crash guard (0.4.0-37): videoArmed is set just before record() and cleared once the
+        // recording runs or fails cleanly. Still set at the next start = record() crashed the app,
+        // so videoBroken keeps recording off until "Try video again" in the settings.
+        property bool videoArmed: false
+        property bool videoBroken: false
         property int burstN: 3                  // 2..5: how many frames per press
         property bool steadyShot: false
         property real steadyLimit: 6            // degrees per second that count as "steady"
@@ -207,6 +212,11 @@ Page {
     property real pageBuiltAt: 0
     Component.onCompleted: {
         pageBuiltAt = Date.now()
+        if (cfg.videoArmed) {                // the last recording start took the app down
+            cfg.videoArmed = false
+            cfg.videoBroken = true
+            message = qsTr("Video recording crashed the app on this phone (a Sailfish bug), so it stays off.")
+        }
         if (lastShot !== "") showLastPhoto()
     }
     property int resumeMs: -1           // back to the app -> camera running
@@ -1635,6 +1645,10 @@ Page {
             camera.videoRecorder.stop()
             return
         }
+        if (cfg.videoBroken) {
+            message = qsTr("Video recording crashes on this phone (a Sailfish bug). Settings: Try video again.")
+            return
+        }
         if (camera.cameraStatus !== Camera.ActiveStatus || restarting || recordDelay.running) return
         message = ""
         videoError = ""
@@ -1650,14 +1664,26 @@ Page {
         interval: 300
         onTriggered: {
             camera.unlock()                 // no focus lock left from a photo
+            cfg.videoArmed = true
+            if (typeof cfg.sync === "function") cfg.sync()   // on disk before the part that may crash
             camera.videoRecorder.record()
+            videoRunning.restart()
         }
+    }
+
+    // Recording for 3 s, stopped normally or a clean error: record() did not crash
+    Timer {
+        id: videoRunning
+        interval: 3000
+        onTriggered: cfg.videoArmed = false
     }
 
     // The camera is left alone for 2 s before it starts again: an immediate restart after a
     // recorder error crashed the app in 0.3.0-2.
     function videoFailed(error) {
         recordDelay.stop()
+        videoRunning.stop()
+        cfg.videoArmed = false
         videoError = error
         console.warn("FastShot video failed: " + error)
         restarting = true
@@ -1683,6 +1709,8 @@ Page {
         onRecorderStateChanged: {
             if (camera.videoRecorder.recorderState !== CameraRecorder.StoppedState || page.videoError !== "")
                 return
+            videoRunning.stop()
+            cfg.videoArmed = false
             var loc = String(camera.videoRecorder.actualLocation).replace(/^file:\/\//, "")
             if (loc !== "") {
                 page.lastVideo = loc
@@ -2137,8 +2165,6 @@ Page {
         Repeater {
             model: [
                 { text: page.videoMode ? qsTr("● Video") : qsTr("Photo"), action: "mode", show: !page.recording },
-                { text: qsTr("Flash: %1").arg(page.flashNames[cfg.flash] || ""), action: "flash",
-                  show: !page.front && !page.videoMode },
                 { text: (page.modeNames[cfg.enhanceMode] || cfg.enhanceMode) + " ▾", action: "enhance",
                   show: !page.recording },
                 { text: qsTr("QR"), action: "qr", show: !page.videoMode }
@@ -2167,9 +2193,41 @@ Page {
                         if (modelData.action !== "enhance") page.enhancePicker = false
                         if (modelData.action === "enhance") page.enhancePicker = !page.enhancePicker
                         else if (modelData.action === "mode") page.switchMode()
-                        else if (modelData.action === "flash") cfg.flash = (cfg.flash + 1) % 3
                         else if (modelData.action === "qr") page.qrMode = !page.qrMode
                     }
+                }
+            }
+        }
+
+        // Flash: a symbol, tap for auto -> on -> off (the Jolla camera's icons; text if missing)
+        Rectangle {
+            visible: !page.front && !page.videoMode
+            width: Theme.itemSizeSmall
+            height: width
+            radius: width / 2
+            color: Qt.rgba(0, 0, 0, 0.5)
+            border { width: 1; color: Qt.rgba(1, 1, 1, 0.6) }
+            Image {
+                id: flashIcon
+                anchors.centerIn: parent
+                source: "image://theme/icon-camera-flash-" + ["automatic", "on", "off"][cfg.flash] + "?white"
+                rotation: -page.deviceRotation
+                Behavior on rotation { RotationAnimation { duration: 200; direction: RotationAnimation.Shortest } }
+            }
+            Label {
+                anchors.centerIn: parent
+                visible: flashIcon.status !== Image.Ready
+                text: ["⚡A", "⚡", "⚡✕"][cfg.flash]
+                color: "white"
+                font.pixelSize: Theme.fontSizeMedium
+                font.bold: true
+                rotation: -page.deviceRotation
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    page.enhancePicker = false
+                    cfg.flash = (cfg.flash + 1) % 3
                 }
             }
         }
@@ -2396,7 +2454,7 @@ Page {
                 height: width
                 radius: page.recording ? Theme.paddingSmall : width / 2
                 color: shutterArea.pressed ? Theme.highlightColor
-                       : page.videoMode ? "#e53935"
+                       : page.videoMode ? (cfg.videoBroken ? "#777777" : "#e53935")
                        : (camera.imageCapture.ready ? "white" : Qt.rgba(1, 1, 1, 0.5))
             }
             Label {

@@ -1,7 +1,7 @@
 Name:       harbour-fastshot
 Summary:    Fast camera with optional automatic photo enhancement
 Version:    0.4.0
-Release:    36
+Release:    37
 License:    GPLv3+
 BuildArch:  noarch
 Source0:    %{name}-%{version}.tar.bz2
@@ -49,6 +49,11 @@ done
 %{_datadir}/icons/hicolor/*/apps/%{name}.png
 
 %changelog
+* Thu Nov 26 2026 FastShot contributors - 0.4.0-37
+- Video crash guard: if starting a recording takes the app down, the next start notices it and
+  keeps recording off (grey button, message) instead of crashing again. Settings: Try video again.
+- Flash is a round symbol button (auto / on / off).
+
 * Thu Nov 26 2026 FastShot contributors - 0.4.0-36
 - Camera screen: settings open from a gear button; the enhance chip opens a list to pick the
   mode (Off, Smart auto, Low light, Vivid, Subtle) right there.

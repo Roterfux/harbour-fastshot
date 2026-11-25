@@ -200,6 +200,21 @@ Page {
                 }
                 onCurrentIndexChanged: page.cfg.videoRes = values[currentIndex]
             }
+            Button {
+                anchors.horizontalCenter: parent.horizontalCenter
+                visible: page.cfg.videoBroken
+                text: qsTr("Try video again")
+                onClicked: page.cfg.videoBroken = false
+            }
+            Label {
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                visible: page.cfg.videoBroken
+                wrapMode: Text.Wrap
+                color: Theme.secondaryHighlightColor
+                font.pixelSize: Theme.fontSizeExtraSmall
+                text: qsTr("Recording is off: starting it crashed the app (a Sailfish camera bug on this phone). After a Sailfish update, try again.")
+            }
 
             ComboBox {
                 id: burstModeBox
