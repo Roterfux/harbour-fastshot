@@ -11,4 +11,4 @@ OrganizationName=harbour
 ApplicationName=fastshot
 # Camera: the viewfinder and taking photos.
 # Pictures: save to Pictures/Camera and write the enhanced copies.
-Permissions=Camera;Pictures
+Permissions=Camera;Pictures;Audio;Microphone

@@ -190,6 +190,18 @@ Page {
             }
 
             ComboBox {
+                readonly property var values: ["720", "1080", "2160"]
+                label: qsTr("Video")
+                currentIndex: Math.max(0, values.indexOf(page.cfg.videoRes))
+                menu: ContextMenu {
+                    MenuItem { text: "720p" }
+                    MenuItem { text: "1080p" }
+                    MenuItem { text: "4K" }
+                }
+                onCurrentIndexChanged: page.cfg.videoRes = values[currentIndex]
+            }
+
+            ComboBox {
                 id: burstModeBox
                 label: qsTr("Multi-shot")
                 currentIndex: Math.max(0, burstModes.indexOf(page.cfg.burstMode))

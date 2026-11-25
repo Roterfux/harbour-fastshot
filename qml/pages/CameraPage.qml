@@ -116,6 +116,8 @@ Page {
         property int queueLeft: 0               // photos still to enhance (resumed at the next start)
         property string lastParams: ""          // smart-auto numbers of the last photo (live preview)
         property string burstMode: "single"    // "single", "best" or "stack"
+        property string captureMode: "photo"   // photo or video (0.4.0-34)
+        property string videoRes: "1080"       // 720, 1080 or 2160 (lines)
         property int burstN: 3                  // 2..5: how many frames per press
         property bool steadyShot: false
         property real steadyLimit: 6            // degrees per second that count as "steady"
@@ -344,6 +346,10 @@ Page {
 
     function shutterDown() {
         burstCount = 0
+        if (videoMode) {                   // video: tap to start, tap again to stop
+            toggleRecording()
+            return
+        }
         if (cfg.focusBeforeShot && cfg.focusOnTouch && canFocus() && !focusing) {
             prefocusing = true
             if (camera.lockStatus !== Camera.Locked) startFocus()   // already sharp: just wait for release
@@ -366,6 +372,7 @@ Page {
     }
 
     function shutterHeld() {
+        if (videoMode) return              // no burst in video mode
         prefocusing = false                // a burst does not wait for focus
         shootAfterFocus = false
         holding = true
@@ -755,7 +762,7 @@ Page {
     // (dconf), as Qt 5.6 cannot list photo sizes; 3840x2160 if the phone has none.
     readonly property bool wide: cfg.aspect === "16:9"
     // the shape of the picture: 16:9 or 4:3
-    readonly property bool wideFrame: wide
+    readonly property bool wideFrame: videoMode || wide
     readonly property string sensorKey: front ? "secondary" : "primary"
 
     ConfigurationValue {
@@ -810,7 +817,8 @@ Page {
     readonly property var vfMap: parseJson(cfg.vfSizes)
     readonly property string formatKey: (selectedId || (front ? "front" : "back")) + ":"
                                         + cfg.aspect
-    readonly property var viewfinderSize: parseSize(vfMap[formatKey]) || Qt.size(-1, -1)
+    readonly property var viewfinderSize: videoMode ? videoViewfinder
+                                          : parseSize(vfMap[formatKey]) || Qt.size(-1, -1)
 
     function parseJson(text) {
         try { return JSON.parse(text || "{}") } catch (e) { return {} }
@@ -960,6 +968,9 @@ Page {
         t.push("  Back/front switch -> camera running: direct " + stat(lagSwitch)
                + ", released first " + stat(lagSwitchU) + " (now: "
                + (cfg.switchUnload ? "released first" : "direct") + ")")
+        t.push("Video: mode " + (videoMode ? "video" : "photo") + ", " + videoSize.width + "x"
+               + videoSize.height + ", recorder state " + camera.videoRecorder.recorderState
+               + ", last " + (lastVideo || "none") + (videoError !== "" ? ", error: " + videoError : ""))
         t.push("  Press -> capture started: " + stat(lagStart))
         t.push("  Press -> photo taken: " + stat(lagTaken) + " (preview events: " + previewEvents + ")")
         t.push("  Press -> file saved: " + stat(lagSaved))
@@ -1005,7 +1016,8 @@ Page {
     }
 
     function checkStuck() {
-        if (camera.cameraStatus !== Camera.ActiveStatus || restarting) return
+        // in video mode the photo side is never "ready": a restart would kill a recording
+        if (videoMode || camera.cameraStatus !== Camera.ActiveStatus || restarting) return
         if (inFlight === 0 && camera.imageCapture.ready) return        // all fine
         console.warn("FastShot: camera stuck (" + formatKey + ", " + inFlight
                      + " photos unfinished, ready " + camera.imageCapture.ready + "), restarting it")
@@ -1071,6 +1083,8 @@ Page {
     }
 
     onCameraWantedChanged: {
+        // leaving the app finishes a video file before the camera pauses
+        if (!cameraWanted && recording) camera.videoRecorder.stop()
         if (orient) orient.active = cameraWanted
         if (lightSensor) lightSensor.active = cameraWanted
         if (accel) accel.active = cameraWanted
@@ -1219,6 +1233,10 @@ Page {
         if (keyHeld) return            // key repeat, or both volume keys at once
         keyHeld = true
         burstCount = 0
+        if (videoMode) {
+            toggleRecording()
+            return
+        }
         shoot()
         keyHoldTimer.restart()
     }
@@ -1591,18 +1609,117 @@ Page {
         }
     }
 
+    // ------------------------------------------------------------------ video
+    // Brought back from 0.3.0-6 without its fallback steps (all failed the same way). On the
+    // Xperia 10 III with Sailfish 5.2 the phone's recorder refuses to start (CameraSource -22, in
+    // every app): this shows the error until Jolla fixes it. Switching goes through a full camera
+    // restart, the safe way on this phone. H.264 + AAC in MP4, saved to Pictures/Camera.
+    readonly property bool videoMode: cfg.captureMode === "video"
+    readonly property bool recording: camera.videoRecorder.recorderState === CameraRecorder.RecordingState
+    property string lastVideo: ""
+    property string videoError: ""
+    readonly property var videoSize: cfg.videoRes === "2160" ? Qt.size(3840, 2160)
+                                   : cfg.videoRes === "720" ? Qt.size(1280, 720) : Qt.size(1920, 1080)
+    // both are in this phone's viewfinder list (Camera info)
+    readonly property var videoViewfinder: videoSize.height <= 720 ? Qt.size(1280, 720) : Qt.size(1920, 1080)
+
+    function switchMode() {
+        if (recording) return
+        qrMode = false
+        cfg.captureMode = videoMode ? "photo" : "video"
+        restartCamera()                     // captureMode changes while the camera is unloaded
+    }
+
+    function toggleRecording() {
+        if (recording) {
+            camera.videoRecorder.stop()
+            return
+        }
+        if (camera.cameraStatus !== Camera.ActiveStatus || restarting || recordDelay.running) return
+        message = ""
+        videoError = ""
+        camera.metaData.orientation = captureRotation()
+        var name = "VID_" + Qt.formatDateTime(new Date(), "yyyyMMdd_hhmmss") + ".mp4"
+        if (cfg.saveDir !== "") camera.videoRecorder.outputLocation = cfg.saveDir + "/" + name
+        grabThumbnail()
+        recordDelay.restart()
+    }
+
+    Timer {
+        id: recordDelay
+        interval: 300
+        onTriggered: {
+            camera.unlock()                 // no focus lock left from a photo
+            camera.videoRecorder.record()
+        }
+    }
+
+    // The camera is left alone for 2 s before it starts again: an immediate restart after a
+    // recorder error crashed the app in 0.3.0-2.
+    function videoFailed(error) {
+        recordDelay.stop()
+        videoError = error
+        console.warn("FastShot video failed: " + error)
+        restarting = true
+        videoRestartTimer.restart()
+        message = qsTr("Video could not record: %1").arg(error)
+    }
+
+    Timer {
+        id: videoRestartTimer
+        interval: 2000
+        onTriggered: page.restarting = false
+    }
+
+    function formatDuration(ms) {
+        var s = Math.floor(ms / 1000)
+        var m = Math.floor(s / 60)
+        s = s % 60
+        return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s
+    }
+
+    Connections {
+        target: camera.videoRecorder
+        onRecorderStateChanged: {
+            if (camera.videoRecorder.recorderState !== CameraRecorder.StoppedState || page.videoError !== "")
+                return
+            var loc = String(camera.videoRecorder.actualLocation).replace(/^file:\/\//, "")
+            if (loc !== "") {
+                page.lastVideo = loc
+                page.lastShot = loc               // tap the corner to play it
+            }
+        }
+        onErrorStringChanged: {
+            if (camera.videoRecorder.errorString === "") return
+            if (page.videoError === "") page.videoFailed(camera.videoRecorder.errorString)
+        }
+    }
+
     Camera {
         id: camera
         deviceId: page.selectedId
-        captureMode: Camera.CaptureStillImage
+        captureMode: page.videoMode ? Camera.CaptureVideo : Camera.CaptureStillImage
+        // As Sailfish's own camera: MP4, H.264, AAC, average bit rate (Qt's default constant
+        // quality is not supported by the phone's encoder)
+        videoRecorder {
+            resolution: page.videoSize
+            frameRate: 0
+            mediaContainer: "video/quicktime, variant=(string)iso"
+            videoCodec: "video/x-h264"
+            audioCodec: "audio/mpeg, mpegversion=(int)4"
+            audioSampleRate: 48000
+            audioChannels: 1
+            videoEncodingMode: CameraRecorder.AverageBitRateEncoding
+            videoBitRate: cfg.videoRes === "2160" ? 40000000 : cfg.videoRes === "720" ? 6000000 : 12000000
+        }
         // -1x-1 = the camera's default until matchViewfinder() has chosen one
         viewfinder.resolution: page.viewfinderSize
-        imageCapture.resolution: page.photoResolution
+        imageCapture.resolution: page.videoMode ? page.videoSize : page.photoResolution
         cameraState: page.restarting ? Camera.UnloadedState
                      : page.cameraWanted ? Camera.ActiveState
                      : (page.keepLoaded ? Camera.LoadedState : Camera.UnloadedState)
         // no flash while scanning QR codes (the scanner may take photos twice a second)
-        flash.mode: page.qrMode ? Camera.FlashOff
+        flash.mode: page.qrMode || page.videoMode ? Camera.FlashOff
                     : page.flashModes[cfg.flash] !== undefined ? page.flashModes[cfg.flash] : Camera.FlashAuto
         focus.focusMode: Camera.FocusContinuous
         focus.focusPointMode: Camera.FocusPointAuto
@@ -1681,6 +1798,10 @@ Page {
 
     function recover(error) {
         console.warn("FastShot camera error (" + formatKey + "): " + error)
+        if (videoMode && (recording || /record/i.test(error))) {
+            videoFailed(error)
+            return
+        }
         if (recoverStep < 1 && vfMap[formatKey]) {
             recoverStep = 1
             forgetViewfinder()
@@ -1877,7 +1998,7 @@ Page {
                   bottomMargin: Theme.paddingLarge * 3 }
         visible: page.zoomFactor > 1.02
         width: zoomText.width + 2 * Theme.paddingMedium
-        height: Theme.itemSizeExtraSmall * 0.8
+        height: Theme.itemSizeSmall
         radius: height / 2
         color: Qt.rgba(0, 0, 0, 0.45)
         border { width: 1; color: "white" }
@@ -1886,7 +2007,7 @@ Page {
             anchors.centerIn: parent
             text: page.zoomFactor.toFixed(1) + "×"
             color: page.zoomFactor > 2.05 ? "#ffcc66" : "white"      // past 2x: visibly softer
-            font.pixelSize: Theme.fontSizeSmall
+            font.pixelSize: Theme.fontSizeMedium
             font.bold: true
             rotation: -page.deviceRotation
             Behavior on rotation { RotationAnimation { duration: 200; direction: RotationAnimation.Shortest } }
@@ -2006,39 +2127,46 @@ Page {
     }
 
     // ------------------------------------------------------------------ top bar
-    Row {
+    // Big chips (0.4.0-34): they wrap onto a second line when they don't fit
+    Flow {
         id: topBar
-        anchors { top: parent.top; topMargin: Theme.paddingLarge; horizontalCenter: parent.horizontalCenter }
+        anchors { top: parent.top; topMargin: Theme.paddingLarge; left: parent.left; right: parent.right
+                  leftMargin: Theme.horizontalPageMargin; rightMargin: Theme.horizontalPageMargin }
         spacing: Theme.paddingMedium
 
         Repeater {
             model: [
-                { text: cfg.aspect, action: "aspect", show: true },
+                { text: page.videoMode ? qsTr("● Video") : qsTr("Photo"), action: "mode", show: !page.recording },
+                { text: cfg.aspect, action: "aspect", show: !page.videoMode },
                 { text: qsTr("Flash: %1").arg(page.flashNames[cfg.flash] || ""), action: "flash",
-                  show: !page.front },
-                { text: qsTr("Enhance: %1").arg(page.modeNames[cfg.enhanceMode] || cfg.enhanceMode), action: "settings", show: true },
-                { text: qsTr("QR"), action: "qr", show: true }
+                  show: !page.front && !page.videoMode },
+                { text: qsTr("Enhance: %1").arg(page.modeNames[cfg.enhanceMode] || cfg.enhanceMode), action: "settings",
+                  show: !page.recording },
+                { text: qsTr("QR"), action: "qr", show: !page.videoMode }
             ]
             delegate: Rectangle {
                 visible: modelData.show
-                width: chip.width + 2 * Theme.paddingMedium
-                height: Theme.itemSizeExtraSmall * 0.8
+                width: chip.width + 2 * Theme.paddingLarge
+                height: Theme.itemSizeSmall
                 radius: height / 2
-                color: modelData.action === "qr" && page.qrMode ? Theme.highlightBackgroundColor
-                                                                : Qt.rgba(0, 0, 0, 0.45)
+                color: (modelData.action === "qr" && page.qrMode) || (modelData.action === "mode" && page.videoMode)
+                       ? Theme.highlightBackgroundColor : Qt.rgba(0, 0, 0, 0.5)
+                border { width: 1; color: Qt.rgba(1, 1, 1, 0.6) }
                 Label {
                     id: chip
                     anchors.centerIn: parent
                     text: modelData.text
                     color: "white"
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.fontSizeMedium
+                    font.bold: true
                     rotation: -page.deviceRotation
                     Behavior on rotation { RotationAnimation { duration: 200; direction: RotationAnimation.Shortest } }
                 }
                 MouseArea {
                     anchors.fill: parent
                     onClicked: {
-                        if (modelData.action === "flash") cfg.flash = (cfg.flash + 1) % 3
+                        if (modelData.action === "mode") page.switchMode()
+                        else if (modelData.action === "flash") cfg.flash = (cfg.flash + 1) % 3
                         else if (modelData.action === "aspect") cfg.aspect = cfg.aspect === "16:9" ? "4:3" : "16:9"
                         else if (modelData.action === "qr") page.qrMode = !page.qrMode
                         else pageStack.push(Qt.resolvedUrl("SettingsPage.qml"),
@@ -2050,13 +2178,48 @@ Page {
         }
     }
 
+    // Recording: red dot and running time
+    Rectangle {
+        anchors { top: parent.top; topMargin: Theme.paddingLarge; horizontalCenter: parent.horizontalCenter }
+        visible: page.recording
+        width: recRow.width + 2 * Theme.paddingLarge
+        height: Theme.itemSizeSmall
+        radius: height / 2
+        color: Qt.rgba(0, 0, 0, 0.5)
+        Row {
+            id: recRow
+            anchors.centerIn: parent
+            spacing: Theme.paddingMedium
+            rotation: -page.deviceRotation
+            Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                width: Theme.paddingLarge
+                height: width
+                radius: width / 2
+                color: "#e53935"
+                SequentialAnimation on opacity {
+                    running: page.recording
+                    loops: Animation.Infinite
+                    NumberAnimation { to: 0.2; duration: 500 }
+                    NumberAnimation { to: 1.0; duration: 500 }
+                }
+            }
+            Label {
+                text: page.formatDuration(camera.videoRecorder.duration)
+                color: "white"
+                font.pixelSize: Theme.fontSizeLarge
+                font.bold: true
+            }
+        }
+    }
+
     // The distance the camera focused at for the photo just taken (if the camera wrote it)
     Rectangle {
         id: distancePill
         anchors { top: topBar.bottom; topMargin: Theme.paddingMedium; horizontalCenter: parent.horizontalCenter }
         visible: distanceTimer.running && page.distanceText !== ""
         width: distanceLabel.width + 2 * Theme.paddingMedium
-        height: Theme.itemSizeExtraSmall * 0.8
+        height: Theme.itemSizeSmall
         radius: height / 2
         color: Qt.rgba(0, 0, 0, 0.45)
         Label {
@@ -2064,7 +2227,7 @@ Page {
             anchors.centerIn: parent
             text: page.distanceText
             color: "white"
-            font.pixelSize: Theme.fontSizeSmall
+            font.pixelSize: Theme.fontSizeMedium
             rotation: -page.deviceRotation
             Behavior on rotation { RotationAnimation { duration: 200; direction: RotationAnimation.Shortest } }
         }
@@ -2086,12 +2249,12 @@ Page {
     Item {
         id: bottomBar
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom; bottomMargin: Theme.paddingLarge * 2 }
-        height: Theme.itemSizeHuge
+        height: Theme.itemSizeHuge * 1.2
 
         // Last photo; tap to open it in the gallery
         Rectangle {
             anchors { left: parent.left; leftMargin: Theme.horizontalPageMargin * 2; verticalCenter: parent.verticalCenter }
-            width: Theme.itemSizeMedium
+            width: Theme.itemSizeLarge
             height: width
             radius: Theme.paddingSmall
             color: Qt.rgba(1, 1, 1, 0.15)
@@ -2144,7 +2307,9 @@ Page {
             MouseArea {
                 anchors.fill: parent
                 enabled: page.lastShot !== ""
-                onClicked: pageStack.push(Qt.resolvedUrl("GalleryPage.qml"),
+                onClicked: /\.mp4$/i.test(page.lastShot)
+                    ? Qt.openUrlExternally("file://" + page.lastShot)      // videos play in the system player
+                    : pageStack.push(Qt.resolvedUrl("GalleryPage.qml"),
                     { folder: cfg.saveDir, startPhoto: page.lastShot, py: page.py,
                       afterDelete: function (path, newest) {
                           if (path !== page.lastShot) return
@@ -2159,19 +2324,21 @@ Page {
         Rectangle {
             id: shutter
             anchors.centerIn: parent
-            width: Theme.itemSizeHuge * 0.9
+            width: Theme.itemSizeHuge * 1.1
             height: width
             radius: width / 2
             color: "transparent"
-            border { width: 6; color: "white" }
+            border { width: 8; color: "white" }
             opacity: camera.cameraStatus === Camera.ActiveStatus ? 1.0 : 0.4
 
+            // photo: white disc; video: red disc, a red square while recording (= stop)
             Rectangle {
                 anchors.centerIn: parent
-                width: parent.width - 22
+                width: page.recording ? parent.width * 0.42 : parent.width - 26
                 height: width
-                radius: width / 2
+                radius: page.recording ? Theme.paddingSmall : width / 2
                 color: shutterArea.pressed ? Theme.highlightColor
+                       : page.videoMode ? "#e53935"
                        : (camera.imageCapture.ready ? "white" : Qt.rgba(1, 1, 1, 0.5))
             }
             Label {
@@ -2186,7 +2353,7 @@ Page {
             }
             Label {
                 anchors { bottom: parent.bottom; bottomMargin: 2; horizontalCenter: parent.horizontalCenter }
-                visible: cfg.burstMode !== "single" && !page.holding && page.groupSlots === 0
+                visible: cfg.burstMode !== "single" && !page.videoMode && !page.holding && page.groupSlots === 0
                 text: cfg.burstMode === "panorama" ? "PANO"
                       : (cfg.burstMode === "best" ? "B" : cfg.burstMode === "superres" ? "SR"
                          : cfg.burstMode === "hdr" ? "HD" : "S") + cfg.burstN
@@ -2210,17 +2377,17 @@ Page {
         // Switch between the back and front camera
         Rectangle {
             anchors { right: parent.right; rightMargin: Theme.horizontalPageMargin * 2; verticalCenter: parent.verticalCenter }
-            width: Theme.itemSizeMedium
+            width: Theme.itemSizeLarge
             height: width
             radius: width / 2
-            color: Qt.rgba(0, 0, 0, 0.45)
-            border { width: 2; color: "white" }
-            visible: page.frontCameras.length > 0 && page.backCameras.length > 0
+            color: Qt.rgba(0, 0, 0, 0.5)
+            border { width: 3; color: "white" }
+            visible: (page.frontCameras.length > 0 && page.backCameras.length > 0) && !page.recording
             Label {
                 anchors.centerIn: parent
                 text: "⇄"
                 color: "white"
-                font.pixelSize: Theme.fontSizeLarge
+                font.pixelSize: Theme.fontSizeExtraLarge
                 rotation: -page.deviceRotation
                 Behavior on rotation { RotationAnimation { duration: 200; direction: RotationAnimation.Shortest } }
             }
@@ -2233,7 +2400,7 @@ Page {
         id: lensRow
         anchors { bottom: bottomBar.top; bottomMargin: Theme.paddingMedium; horizontalCenter: parent.horizontalCenter }
         spacing: Theme.paddingMedium
-        height: page.lenses.length > 1 ? Theme.itemSizeExtraSmall * 0.8 : 0
+        height: page.lenses.length > 1 ? Theme.itemSizeSmall : 0
         visible: page.lenses.length > 1
 
         Repeater {
@@ -2250,7 +2417,7 @@ Page {
                     anchors.centerIn: parent
                     text: page.lensLabel(modelData, index)
                     color: "white"
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.fontSizeMedium
                     font.bold: parent.current
                     rotation: -page.deviceRotation
                     Behavior on rotation { RotationAnimation { duration: 200; direction: RotationAnimation.Shortest } }
