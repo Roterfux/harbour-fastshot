@@ -213,7 +213,7 @@ Page {
                 wrapMode: Text.Wrap
                 color: Theme.secondaryHighlightColor
                 font.pixelSize: Theme.fontSizeExtraSmall
-                text: qsTr("Recording is off: starting it crashed the app (a Sailfish camera bug on this phone). After a Sailfish update, try again.")
+                text: qsTr("Recording is off: it crashed the app. On the Xperia 10 III the camera service crashes when a recording stops, because Sony's libswregistrationalgo.so is missing from /odm. Once it is installed (see the harbour-advanced-camera README), try again.")
             }
 
             ComboBox {

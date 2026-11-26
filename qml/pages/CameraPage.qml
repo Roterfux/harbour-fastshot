@@ -118,8 +118,8 @@ Page {
         property string burstMode: "single"    // "single", "best" or "stack"
         property string captureMode: "photo"   // photo or video (0.4.0-34)
         property string videoRes: "1080"       // 720, 1080 or 2160 (lines)
-        // Crash guard (0.4.0-37): videoArmed is set just before record() and cleared once the
-        // recording runs or fails cleanly. Still set at the next start = record() crashed the app,
+        // Crash guard (0.4.0-37, -38): videoArmed is set just before record() and cleared 3 s
+        // after a clean stop or on a clean error. Still set at the next start = record() crashed the app,
         // so videoBroken keeps recording off until "Try video again" in the settings.
         property bool videoArmed: false
         property bool videoBroken: false
@@ -1667,11 +1667,12 @@ Page {
             cfg.videoArmed = true
             if (typeof cfg.sync === "function") cfg.sync()   // on disk before the part that may crash
             camera.videoRecorder.record()
-            videoRunning.restart()
         }
     }
 
-    // Recording for 3 s, stopped normally or a clean error: record() did not crash
+    // 3 s after a clean stop: neither record() nor stop() crashed. On the Xperia 10 III the
+    // camera provider segfaults on stop when libswregistrationalgo.so is missing from /odm
+    // (see harbour-advanced-camera README), so the flag must survive the stop.
     Timer {
         id: videoRunning
         interval: 3000
@@ -1709,8 +1710,7 @@ Page {
         onRecorderStateChanged: {
             if (camera.videoRecorder.recorderState !== CameraRecorder.StoppedState || page.videoError !== "")
                 return
-            videoRunning.stop()
-            cfg.videoArmed = false
+            videoRunning.restart()
             var loc = String(camera.videoRecorder.actualLocation).replace(/^file:\/\//, "")
             if (loc !== "") {
                 page.lastVideo = loc

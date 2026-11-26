@@ -1,7 +1,7 @@
 Name:       harbour-fastshot
 Summary:    Fast camera with optional automatic photo enhancement
 Version:    0.4.0
-Release:    37
+Release:    38
 License:    GPLv3+
 BuildArch:  noarch
 Source0:    %{name}-%{version}.tar.bz2
@@ -49,6 +49,9 @@ done
 %{_datadir}/icons/hicolor/*/apps/%{name}.png
 
 %changelog
+* Thu Nov 26 2026 FastShot contributors - 0.4.0-38
+- Video crash guard also covers the crash on stop (Xperia 10 III camera provider segfault when
+  libswregistrationalgo.so is missing from /odm); the settings explain the fix.
 * Thu Nov 26 2026 FastShot contributors - 0.4.0-37
 - Video crash guard: if starting a recording takes the app down, the next start notices it and
   keeps recording off (grey button, message) instead of crashing again. Settings: Try video again.
